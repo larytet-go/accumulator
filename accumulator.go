@@ -1,3 +1,11 @@
+package accumulator
+
+import (
+	"bytes"
+	"fmt"
+	"sync"
+)
+
 type accumulatorCounter struct {
 	summ    uint64
 	updates uint64
@@ -15,7 +23,7 @@ type Accumulator struct {
 	Name     string
 }
 
-type AccumulatorResult struct {
+type Result struct {
 	Nonzero   bool
 	MaxWindow uint64
 	Max       uint64
@@ -83,29 +91,29 @@ func (a *Accumulator) PeekAverage() uint64 {
 
 // Return the results - averages over the window of "size" entries
 // Use "divider" to normalize the output in the same copy path
-func (a *Accumulator) GetAverage(divider uint64) AccumulatorResult {
+func (a *Accumulator) GetAverage(divider uint64) Result {
 	return a.getResult(divider, true)
 }
 
 // Use "divider" to normalize the output in the same copy path
-func (a *Accumulator) GetSumm(divider uint64) AccumulatorResult {
+func (a *Accumulator) GetSumm(divider uint64) Result {
 	return a.getResult(divider, false)
 }
 
-func (a *Accumulator) GetSummSync(divider uint64) AccumulatorResult {
+func (a *Accumulator) GetSummSync(divider uint64) Result {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
 	return a.getResult(divider, false)
 }
 
 // Use "divider" to normalize the output in the same copy path
-func (a *Accumulator) getResult(divider uint64, average bool) AccumulatorResult {
-	var nonzero bool = false
+func (a *Accumulator) getResult(divider uint64, average bool) Result {
+	var nonzero = false
 	if divider == 0 {
 		divider = 1
 	}
 	size := a.size
-	var cursor uint64 = a.cursor
+	var cursor = a.cursor
 	if size > a.count {
 		size = a.count
 		cursor = a.size
@@ -136,7 +144,7 @@ func (a *Accumulator) getResult(divider uint64, average bool) AccumulatorResult 
 			results[i] = 0
 		}
 	}
-	return AccumulatorResult{
+	return Result{
 		Results:   results,
 		Nonzero:   nonzero,
 		Max:       max,
@@ -147,7 +155,7 @@ func (a *Accumulator) getResult(divider uint64, average bool) AccumulatorResult 
 func (a *Accumulator) Add(value uint64) {
 	cursor := a.cursor
 	a.counters[cursor].summ += value
-	a.counters[cursor].updates += 1
+	a.counters[cursor].updates++
 }
 
 func (a *Accumulator) AddSync(value uint64) {
@@ -161,7 +169,7 @@ func (a *Accumulator) Tick() {
 	a.cursor = cursor
 	a.counters[cursor].summ = 0
 	a.counters[cursor].updates = 0
-	a.count += 1
+	a.count++
 }
 
 func (a *Accumulator) TickSync() {
@@ -190,7 +198,7 @@ func SprintfSliceUint64(valueFormat string, columns int, a []uint64) string {
 }
 
 func (a *Accumulator) Sprintf(nameFormat string, noDataFormat string, valueFormat string, columns int, divider uint64, average bool) string {
-	var result AccumulatorResult
+	var result Result
 	if average {
 		result = a.GetAverage(divider)
 	} else {
@@ -208,4 +216,21 @@ func (a *Accumulator) Sprintf(nameFormat string, noDataFormat string, valueForma
 	} else {
 		return fmt.Sprintf(noDataFormat, a.Name, a.Size())
 	}
+}
+
+// This is a replacement for the Prometheus "histogram" metric
+func (a *Accumulator) Prometheus(name string, comment string) string {
+	results := a.GetAverage(1)
+	var buffer bytes.Buffer
+	buffer.WriteString(fmt.Sprintf("# HELP %s %s\n", name, comment))
+	buffer.WriteString(fmt.Sprintf("# TYPE %s histogram\n", name))
+	for bin, result := range results.Results {
+		value := result
+		upperLimit := bin
+		buffer.WriteString(fmt.Sprintf("%s_bucket{le=\"%d\"} %d\n", name, upperLimit, value))
+	}
+	// TODO Collect the update count and sums
+	buffer.WriteString(fmt.Sprintf("%s_sum %d\n", name, -1))
+	buffer.WriteString(fmt.Sprintf("%s_count %d\n", name, -1))
+	return buffer.String()
 }
