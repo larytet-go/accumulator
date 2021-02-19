@@ -3,6 +3,7 @@ package accumulator
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"sync"
 )
 
@@ -27,6 +28,7 @@ type Result struct {
 	Nonzero   bool
 	MaxWindow uint64
 	Max       uint64
+	Min       uint64
 	Results   []uint64
 }
 
@@ -120,6 +122,7 @@ func (a *Accumulator) getResult(divider uint64, average bool) Result {
 	}
 	results := make([]uint64, size)
 	max := uint64(0)
+	var min uint64 = math.MaxUint64
 	maxWindow := uint64(0)
 	for i := uint64(0); i < size; i++ {
 		cursor = a.incCursor(cursor)
@@ -139,6 +142,9 @@ func (a *Accumulator) getResult(divider uint64, average bool) Result {
 			if max < result {
 				max = result
 			}
+			if min > result {
+				min = result
+			}
 			results[i] = result
 		} else {
 			results[i] = 0
@@ -148,6 +154,7 @@ func (a *Accumulator) getResult(divider uint64, average bool) Result {
 		Results:   results,
 		Nonzero:   nonzero,
 		Max:       max,
+		Min:       min,
 		MaxWindow: maxWindow,
 	}
 }
